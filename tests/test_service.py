@@ -2,6 +2,7 @@ import unittest
 
 from main import (
     CarLightState,
+    EMERGENCY_DURATION,
     GREEN_DURATION,
     PEDESTRIAN_DURATION,
     TrafficLightService,
@@ -81,6 +82,24 @@ class TrafficLightServiceTest(unittest.TestCase):
         service.resume()
         advance(service, 1)
         self.assertEqual(service.timer.remaining, before - 1)
+
+    # Bloc test 6 - Validation du mode urgence.
+    # Le bouton Urgence force le feu au Rouge, puis le cycle reprend au Vert apres 10 secondes.
+    def test_urgence_force_rouge_puis_reprend_au_vert(self) -> None:
+        service = TrafficLightService()
+        service.start()
+        advance(service, 5)
+
+        service.trigger_emergency()
+        snapshot = service.get_snapshot()
+        self.assertEqual(snapshot.car_state, CarLightState.RED)
+        self.assertTrue(snapshot.emergency_mode)
+        self.assertEqual(snapshot.remaining_seconds, EMERGENCY_DURATION)
+
+        advance(service, EMERGENCY_DURATION)
+        snapshot = service.get_snapshot()
+        self.assertEqual(snapshot.car_state, CarLightState.GREEN)
+        self.assertFalse(snapshot.emergency_mode)
 
 
 if __name__ == "__main__":

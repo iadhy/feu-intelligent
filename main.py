@@ -37,6 +37,7 @@ YELLOW_DURATION = 2
 PEDESTRIAN_DURATION = 6
 VEHICLE_EXTENSION_STEP = 3
 VEHICLE_EXTENSION_MAX = 9
+EMERGENCY_DURATION = 10
 
 
 # Bloc 3 - Snapshot d'affichage.
@@ -49,6 +50,7 @@ class TrafficSnapshot:
     running: bool
     paused: bool
     pedestrian_request: bool
+    emergency_mode: bool
 
 
 # Bloc 4 - Machine a etats du feu voiture.
@@ -171,6 +173,7 @@ class TrafficLightService:
         self.running = False
         self.pedestrian_request = False
         self.in_pedestrian_phase = False
+        self.emergency_mode = False
 
     # Bloc 10 - Demarrage du cycle.
     # Le feu commence au Rouge avec 5 secondes, comme dans la maquette.
@@ -178,6 +181,7 @@ class TrafficLightService:
         self.running = True
         self.pedestrian_request = False
         self.in_pedestrian_phase = False
+        self.emergency_mode = False
         self.car_state_machine.reset()
         self.pedestrian_light.set_wait()
         self.vehicle_sensor.reset()
@@ -204,6 +208,7 @@ class TrafficLightService:
         self.running = False
         self.pedestrian_request = False
         self.in_pedestrian_phase = False
+        self.emergency_mode = False
         self.timer.stop()
         self.pedestrian_light.set_wait()
         self.car_state_machine.reset()
@@ -238,6 +243,21 @@ class TrafficLightService:
         total = self.vehicle_sensor.extension_used()
         return [self.logger.log(f"Vehicule detecte - Vert prolonge de {extension}s (total +{total}s)")]
 
+    # Bloc 13B - Mode urgence.
+    # Le bouton Urgence force le feu voiture au Rouge pendant 10 secondes pour securiser l'intersection.
+    def trigger_emergency(self) -> list[str]:
+        if not self.running:
+            return [self.logger.log("Urgence ignoree - simulation arretee")]
+
+        self.emergency_mode = True
+        self.in_pedestrian_phase = False
+        self.pedestrian_request = False
+        self.car_state_machine.state = CarLightState.RED
+        self.pedestrian_light.set_wait()
+        self.vehicle_sensor.reset()
+        self.timer.start(EMERGENCY_DURATION)
+        return [self.logger.log("URGENCE - Feu force au Rouge pendant 10s")]
+
     # Bloc 14 - Tick de simulation.
     # Cette methode est appelee chaque seconde par le controleur.
     def tick(self) -> list[str]:
@@ -254,6 +274,14 @@ class TrafficLightService:
     # Les regles de securite pieton sont appliquees au moment ou une phase expire.
     def _advance_phase(self) -> list[str]:
         events: list[str] = []
+
+        if self.emergency_mode:
+            self.emergency_mode = False
+            self.car_state_machine.state = CarLightState.GREEN
+            self.vehicle_sensor.reset()
+            self.timer.start(GREEN_DURATION)
+            events.append(self.logger.log("Fin urgence - Rouge -> Vert"))
+            return events
 
         if self.in_pedestrian_phase:
             self.in_pedestrian_phase = False
@@ -296,6 +324,7 @@ class TrafficLightService:
             running=self.running,
             paused=self.timer.paused,
             pedestrian_request=self.pedestrian_request,
+            emergency_mode=self.emergency_mode,
         )
 
 
@@ -335,7 +364,8 @@ class TrafficLightView(tk.Tk):
         self.pause_button = ttk.Button(controls, text="Pause", command=self._on_pause)
         self.resume_button = ttk.Button(controls, text="Reprendre", command=self._on_resume)
         self.stop_button = ttk.Button(controls, text="Arreter", command=self._on_stop)
-        for index, button in enumerate((self.start_button, self.pause_button, self.resume_button, self.stop_button)):
+        self.emergency_button = ttk.Button(controls, text="Urgence", command=self._on_emergency)
+        for index, button in enumerate((self.start_button, self.pause_button, self.resume_button, self.stop_button, self.emergency_button)):
             button.grid(row=0, column=index, padx=5, ipadx=8)
 
         pedestrian_frame = ttk.Frame(self)
@@ -392,6 +422,12 @@ class TrafficLightView(tk.Tk):
         if self.controller:
             self.controller.on_vehicle_button()
 
+    # Bloc 20B - Callback du bouton Urgence.
+    # La vue transmet l'action au controleur sans appliquer elle-meme la regle metier.
+    def _on_emergency(self) -> None:
+        if self.controller:
+            self.controller.on_emergency_button()
+
     # Bloc 21 - Mise a jour du feu voiture.
     # Une seule lampe est allumee a la fois, conformement aux regles metier.
     def update_car_light(self, state: CarLightState) -> None:
@@ -418,6 +454,8 @@ class TrafficLightView(tk.Tk):
             text = "Etat : arrete"
         elif snapshot.paused:
             text = "Etat : pause"
+        elif snapshot.emergency_mode:
+            text = "Etat : URGENCE - feu force au Rouge"
         elif snapshot.pedestrian_request:
             text = "Etat : demande pieton en attente"
         else:
@@ -467,6 +505,13 @@ class TrafficLightController:
     def on_vehicle_button(self) -> None:
         self._append_events(self.service.signal_vehicle())
         self.refresh_view()
+
+    # Bloc 24B - Action Urgence.
+    # Le controleur appelle le service, rafraichit l'affichage et relance la boucle du timer.
+    def on_emergency_button(self) -> None:
+        self._append_events(self.service.trigger_emergency())
+        self.refresh_view()
+        self._schedule_tick()
 
     # Bloc 25 - Boucle Tkinter.
     # Tkinter appelle _tick toutes les secondes via after().
